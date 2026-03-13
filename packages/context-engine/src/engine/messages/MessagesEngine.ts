@@ -23,6 +23,7 @@ import {
 } from '../../processors';
 import {
   AgentBuilderContextInjector,
+  AgentDocumentInjector,
   AgentManagementContextInjector,
   DiscordContextProvider,
   EvalContextSystemInjector,
@@ -134,12 +135,14 @@ export class MessagesEngine {
       capabilities,
       variableGenerators,
       fileContext,
+      messages,
       agentBuilderContext,
       discordContext,
       evalContext,
       agentManagementContext,
       groupAgentBuilderContext,
       agentGroup,
+      agentDocuments,
       gtd,
       userMemory,
       initialContext,
@@ -157,6 +160,7 @@ export class MessagesEngine {
     const isGroupContextEnabled =
       isAgentGroupEnabled || !!agentGroup?.currentAgentId || !!agentGroup?.members;
     const isUserMemoryEnabled = userMemory?.enabled && userMemory?.memories;
+    const hasAgentDocuments = !!agentDocuments && agentDocuments.length > 0;
     // Page editor is enabled if either direct pageContentContext or initialContext.pageEditor is provided
     const isPageEditorEnabled = !!pageContentContext || !!initialContext?.pageEditor;
     // GTD is enabled if gtd.enabled is true and either plan or todos is provided
@@ -169,6 +173,11 @@ export class MessagesEngine {
     const hasDateAwareTools =
       toolIds.includes('lobe-web-browsing') || toolIds.includes('lobe-user-memory');
     const isSystemDateEnabled = enableSystemDate !== false && !hasDateAwareTools;
+    const currentUserMessage = [...messages]
+      .reverse()
+      .find((m) => m.role === 'user' && typeof m.content === 'string')?.content as
+      | string
+      | undefined;
 
     return [
       // =============================================
@@ -228,6 +237,16 @@ export class MessagesEngine {
         fileContents: knowledge?.fileContents,
         knowledgeBases: knowledge?.knowledgeBases,
       }),
+
+      // 7.5 Agent document injection (policy-based autoload documents)
+      ...(hasAgentDocuments
+        ? [
+            new AgentDocumentInjector({
+              currentUserMessage,
+              documents: agentDocuments,
+            }),
+          ]
+        : []),
 
       // 8. Tool Discovery context injection (available tools for dynamic activation)
       ...(toolDiscoveryConfig?.availableTools && toolDiscoveryConfig.availableTools.length > 0
@@ -290,9 +309,9 @@ export class MessagesEngine {
       new PageEditorContextInjector({
         enabled: isPageEditorEnabled,
         // Use direct pageContentContext if provided (server-side), otherwise build from initialContext + stepContext (frontend)
-        pageContentContext: pageContentContext
-          ? pageContentContext
-          : initialContext?.pageEditor
+        pageContentContext:
+          pageContentContext ||
+          (initialContext?.pageEditor
             ? {
                 markdown: initialContext.pageEditor.markdown,
                 metadata: {
@@ -303,7 +322,7 @@ export class MessagesEngine {
                 // Use latest XML from stepContext if available, otherwise fallback to initial XML
                 xml: stepContext?.stepPageEditor?.xml || initialContext.pageEditor.xml,
               }
-            : undefined,
+            : undefined),
       }),
 
       // 16. GTD Todo injection (conditionally added, at end of last user message)
